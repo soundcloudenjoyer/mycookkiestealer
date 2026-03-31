@@ -1,0 +1,3 @@
+D:/!! MSVC Projects/My Cookie Stealer/build/CMakeFiles/mainexe.dir
+D:/!! MSVC Projects/My Cookie Stealer/build/CMakeFiles/edit_cache.dir
+D:/!! MSVC Projects/My Cookie Stealer/build/CMakeFiles/rebuild_cache.dir
